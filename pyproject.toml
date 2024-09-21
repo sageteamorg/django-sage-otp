@@ -1,12 +1,12 @@
 [tool.poetry]
 name = "django-sage-otp"
 version = "0.1.0"
-description = "A python package for managing Otp"
+description = "A Django package for managing Otp"
 authors = ["Sepehr Akbarzadeh <sepehr@sageteam.org>","Radin Ghahremani <radin@sageteam.org>", ]
 readme = "README.md"
 license = "MIT"
 keywords = [ "django", "otp","django-packages" ]
-repository = "https://github.com/sageteamorg/django-sage-meta"
+repository = "https://github.com/sageteamorg/django-sage-otp"
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Programming Language :: Python",
@@ -20,9 +20,6 @@ classifiers = [
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Intended Audience :: Developers",
-]
-packages = [
-    { include = "sage_seo" }
 ]
 [tool.poetry.urls]
 "Source Code" = "https://github.com/sageteamorg/django-sage-otp"
