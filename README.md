@@ -1,1 +1,1 @@
-# django-sage-otp
+# django-sage-auth
