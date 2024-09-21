@@ -21,6 +21,9 @@ classifiers = [
   "Operating System :: OS Independent",
   "Intended Audience :: Developers",
 ]
+packages = [
+    { include = "sage_otp" }
+]
 [tool.poetry.urls]
 "Source Code" = "https://github.com/sageteamorg/django-sage-otp"
 "Issues" = "https://github.com/sageteamorg/django-sage-otp/issues"
