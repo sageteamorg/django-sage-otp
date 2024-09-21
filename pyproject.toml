@@ -1,21 +1,47 @@
 [tool.poetry]
-name = "otp"
+name = "django-sage-otp"
 version = "0.1.0"
-description = ""
-authors = ["radinceorc <radin.ceorc77@gmail.com>"]
+description = "A python package for managing Otp"
+authors = ["Sepehr Akbarzadeh <sepehr@sageteam.org>","Radin Ghahremani <radin@sageteam.org>", ]
 readme = "README.md"
+license = "MIT"
+keywords = [ "django", "otp","django-packages" ]
+repository = "https://github.com/sageteamorg/django-sage-meta"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Intended Audience :: Developers",
+]
+packages = [
+    { include = "sage_seo" }
+]
+[tool.poetry.urls]
+"Source Code" = "https://github.com/sageteamorg/django-sage-otp"
+"Issues" = "https://github.com/sageteamorg/django-sage-otp/issues"
+"Documentation" = "https://django-sage-otp.readthedocs.io"
 
 [tool.poetry.dependencies]
-python = "^3.11"
-django = "^5.1.1"
+python = ">=3.8,<4.0"
+django = [
+    { version = ">=4.2,<5.0", python = ">=3.8,<3.10"},
+    { version = ">=4.2,<5.3", python = ">=3.10" }
+]
 tqdm = "^4.66.5"
 django-sage-tools = "^0.2.2"
 django-import-export = "^4.1.1"
 
-
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.6.1"
-pre-commit = "^3.8.0"
+pre-commit = "^3.5.0"
 mypy = "^1.11.1"
 sphinx-rtd-theme = "^2.0.0"
 tox = "^4.16.0"
