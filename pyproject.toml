@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "django-sage-otp"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Django package for managing Otp"
 authors = ["Sepehr Akbarzadeh <sepehr@sageteam.org>","Radin Ghahremani <radin@sageteam.org>", ]
 readme = "README.md"
