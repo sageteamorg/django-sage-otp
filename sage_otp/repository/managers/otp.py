@@ -52,12 +52,12 @@ class OTPManager:
         # pylint: disable=C0103
         User = get_user_model()
 
-        user = User.objects.get(username=identifier)
+        user = User.objects.get(id=identifier)
 
         otp_query = (
             Q(user=user)
             & Q(reason=reason)
-            & Q(state__in=[OTPState.ACTIVE, OTPState.EXPIRED])
+            & Q(state__in=[OTPState.ACTIVE])
         )
 
         try:
@@ -93,11 +93,15 @@ class OTPManager:
         """
         from sage_otp.models import OTP
 
-        # Get the user model and retrieve the user based on the identifier
         User = get_user_model()
-        user = User.objects.get(username=identifier)
-
-        otp_query = {"user": user, "reason": reason, "state": OTPState.ACTIVE}
+        user = User.objects.get(id=identifier)
+        
+        otp_query = {
+            "user": user,
+            "reason": reason,
+            "state": OTPState.ACTIVE,
+            "last_sent_at":timezone.now()
+        }
         otp, created = OTP.objects.get_or_create(
             **otp_query,
             defaults={
