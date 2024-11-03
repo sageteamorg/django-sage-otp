@@ -66,10 +66,11 @@ class OTPManager:
             raise OTPDoesNotExists(
                 params={"identifier": identifier, "reason": reason}
             ) from e
-        except OTP.MultipleObjectsReturned as e:
-            raise OTPException(
-                message=str(e), params={"identifier": identifier, "reason": reason}
-            ) from e
+        except OTP.MultipleObjectsReturned:
+            otps = OTP.objects.filter(otp_query).order_by("-created_at")
+            latest_otp = otps.first()
+            OTP.objects.filter(pk__in=[otp.pk for otp in otps[1:]]).update(state=OTPState.EXPIRED)
+            return latest_otp
         return otp
 
     def get_or_create_otp(self, identifier: str, reason: str) -> tuple[_T, bool]:
