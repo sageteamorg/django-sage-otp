@@ -1,9 +1,14 @@
 from django.contrib import admin
-from django.utils.translation import gettext_lazy as _
+from django.conf import settings
 from django.utils.timezone import now
+from django.utils.translation import gettext_lazy as _
 
 from sage_otp.models import OTP
+from sage_otp.helpers.choices import OTPState
 from datetime import timedelta
+
+OTP_LIFETIME = getattr(settings, "OTP_LIFETIME", 120)
+
 
 @admin.register(OTP)
 class OTPAdmin(admin.ModelAdmin):
@@ -80,7 +85,6 @@ class OTPAdmin(admin.ModelAdmin):
         """
         Check if the OTP has expired.
         """
-        OTP_LIFETIME = 300  # Example: 5 minutes
         return (obj.created_at + timedelta(seconds=OTP_LIFETIME)) < now()
 
     @admin.display(description="Expires At")
@@ -88,7 +92,6 @@ class OTPAdmin(admin.ModelAdmin):
         """
         Calculate and display the expiration time of the OTP.
         """
-        OTP_LIFETIME = 300  # Example: 5 minutes
         return obj.created_at + timedelta(seconds=OTP_LIFETIME)
 
     @admin.action(description="Expire Active Tokens")
@@ -98,8 +101,8 @@ class OTPAdmin(admin.ModelAdmin):
         """
         updated_count = 0
         for otp in queryset:
-            if otp.state == "active" and self.is_expired(otp):
-                otp.state = "expired"
+            if otp.state == OTPState.ACTIVE and self.is_expired(otp):
+                otp.state = OTPState.EXPIRED
                 otp.save()
                 updated_count += 1
 
