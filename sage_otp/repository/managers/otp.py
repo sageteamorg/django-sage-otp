@@ -9,6 +9,7 @@ import base64
 import logging
 import secrets
 from datetime import timedelta
+from django.conf import settings
 from typing import Dict, NoReturn, Optional, TypeVar, Union
 
 from django.contrib.auth import get_user_model
@@ -27,6 +28,7 @@ from sage_otp.utils import generate_totp
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T", bound=models.Model)
+OTP_LIFETIME = getattr(settings, "OTP_LIFETIME", 120)
 
 
 class OTPManager:
@@ -49,9 +51,9 @@ class OTPManager:
         """Create OTP for the user."""
         from sage_otp.models import OTP
 
-        # pylint: disable=C0103
         User = get_user_model()
 
+        logger.debug("Fetching user with identifier: %s", identifier)
         user = User.objects.get(id=identifier)
 
         otp_query = (
@@ -62,15 +64,17 @@ class OTPManager:
 
         try:
             otp = OTP.objects.get(otp_query)
+            logger.info("OTP fetched successfully for user: %s", identifier)
         except OTP.DoesNotExist as e:
+            logger.warning("No active OTP found for user: %s, reason: %s", identifier, reason)
             raise OTPDoesNotExists(
                 params={"identifier": identifier, "reason": reason}
             ) from e
-        except OTP.MultipleObjectsReturned:
-            otps = OTP.objects.filter(otp_query).order_by("-created_at")
-            latest_otp = otps.first()
-            OTP.objects.filter(pk__in=[otp.pk for otp in otps[1:]]).update(state=OTPState.EXPIRED)
-            return latest_otp
+        except OTP.MultipleObjectsReturned as e:
+            logger.error("Multiple OTPs returned for user: %s, reason: %s", identifier, reason)
+            raise OTPException(
+                message=str(e), params={"identifier": identifier, "reason": reason}
+            ) from e
         return otp
 
     def get_or_create_otp(self, identifier: str, reason: str) -> tuple[_T, bool]:
@@ -78,8 +82,9 @@ class OTPManager:
         Retrieves an existing OTP or creates a new one for the user based on
         the specified reason.
 
-        It looks for active or locked OTPs. If none are found, a new active OTP
-        is created.
+        If an active OTP with the same reason exists:
+        - If expired, mark it as EXPIRED and create a new OTP.
+        - If not expired, return the existing OTP.
 
         Args:
             identifier (str): The identifier (phone number, email, or username)
@@ -95,32 +100,47 @@ class OTPManager:
         from sage_otp.models import OTP
 
         User = get_user_model()
+        logger.debug("Retrieving or creating OTP for user: %s", identifier)
         user = User.objects.get(id=identifier)
-        
-        otp_query = {
-            "user": user,
-            "reason": reason,
-            "state": OTPState.ACTIVE,
-            "last_sent_at":timezone.now()
-        }
-        otp, created = OTP.objects.get_or_create(
-            **otp_query,
-            defaults={
-                "token": generate_totp(self.base32_secret.upper()),
-                "state": OTPState.ACTIVE,
-            }
+
+        # Fetch active OTPs with the same reason
+        active_otps = OTP.objects.filter(
+            user=user,
+            reason=reason,
+            state=OTPState.ACTIVE,
         )
 
-        return otp, created
+        # Expire any active OTPs if necessary
+        for otp in active_otps:
+            token_expire_at = otp.created_at + timedelta(seconds=OTP_LIFETIME)
+            if token_expire_at <= timezone.now():
+                otp.state = OTPState.EXPIRED
+                otp.save()
+                logger.info("Expired old OTP for user: %s, reason: %s", identifier, reason)
+            else:
+                logger.info("Active OTP found for user: %s, reason: %s", identifier, reason)
+                return otp, False
+
+        # Create a new OTP since no valid active OTP exists
+        otp = OTP.objects.create(
+            user=user,
+            reason=reason,
+            token=generate_totp(self.base32_secret.upper()),
+            state=OTPState.ACTIVE,
+            last_sent_at=timezone.now(),
+        )
+        logger.info("Created new OTP for user: %s, reason: %s", identifier, reason)
+        return otp, True
 
     def reset_otp(self, otp):
         """Reset the OTP to its initial state."""
-
+        logger.debug("Resetting OTP with ID: %s", otp.id)
         otp.token = generate_totp(self.base32_secret.upper())
         otp.failed_attempts_count = 0
         otp.resend_requests_count = 0
         otp.lockout_end_time = None
         otp.state = OTPState.ACTIVE
+        logger.info("OTP reset successfully with ID: %s", otp.id)
         return otp
 
     def check_otp_last_sent_at(self, otp) -> Optional[Dict[str, bool]]:
@@ -136,12 +156,13 @@ class OTPManager:
         """
         if otp.last_sent_at:
             if (otp.last_sent_at + self.RESEND_TIME) > timezone.now():
+                remaining_time = int(((otp.last_sent_at + self.RESEND_TIME) - timezone.now()).seconds)
+                logger.warning("Resend delay active for OTP ID: %s, remaining time: %s seconds", otp.id, remaining_time)
                 return {
                     "resend_delay": True,
-                    "resend_release_time_remaining": int(
-                        ((otp.last_sent_at + self.RESEND_TIME) - timezone.now()).seconds
-                    ),
+                    "resend_release_time_remaining": remaining_time,
                 }
+        logger.debug("No resend delay for OTP ID: %s", otp.id)
         return None
 
     def send_otp(
@@ -161,12 +182,12 @@ class OTPManager:
             Optional[Dict[str, Union[bool, int]]]:
             None if the OTP is sent successfully,or lock status if locked.
         """
-        # Unpack the tuple to get the OTP object and the 'created' boolean
+        logger.debug("Attempting to send OTP for user: %s", identifier)
         otp, created = self.get_or_create_otp(identifier, reason)
 
-        # Check if OTP was recently sent and if the resend delay has passed
         resend_data = self.check_otp_last_sent_at(otp)
         if resend_data:
+            logger.warning("Cannot resend OTP for user: %s due to resend delay", identifier)
             return resend_data
 
         otp.state = OTPState.ACTIVE
@@ -174,6 +195,7 @@ class OTPManager:
         otp.last_sent_at = timezone.now()
         otp.save()
 
+        logger.info("OTP sent successfully for user: %s", identifier)
         return None
 
     def check_otp(
@@ -195,30 +217,26 @@ class OTPManager:
                     a dictionary with 'token_is_correct' set to False is returned.
                 - If the OTP has expired, an OTPExpiredException is raised.
         """
-
+        logger.debug("Validating OTP for user: %s, reason: %s", identifier, reason)
         otp = self.get_otp(identifier, reason)
-        # data = self.check_otp_lockout_end_time(otp)
-        # if data:
-        #     return data
-        # otp = self.check_token_expiry(otp)
-        # otp = self.check_lock_otp(otp)
 
         if otp.token == token and otp.state == OTPState.ACTIVE:
             otp.state = OTPState.CONSUMED
-            logger.info("user:%s put the code successfully", identifier)
             otp.save()
+            logger.info("OTP validation successful for user: %s", identifier)
             return {"token_is_correct": True}
 
         if otp.token == token and otp.state == OTPState.EXPIRED:
-            logger.info("token:%s has been expired for user: %s", otp.token, identifier)
+            logger.warning("Expired OTP attempted for user: %s", identifier)
             raise OTPExpiredException("Token has been expired.")
 
         otp.failed_attempts_count += 1
         if otp.failed_attempts_count >= self.MAXIMUM_WRONG_SUBMITS:
             otp.lockout_end_time = timezone.now() + self.LOCK_TIME
             otp.state = OTPState.LOCKED
+            logger.error("User: %s locked out due to multiple failed OTP attempts", identifier)
         otp.save()
-        logger.info("user:%s did not put the code successfully", identifier)
+        logger.warning("Incorrect OTP entered for user: %s", identifier)
         return {"token_is_correct": False}
 
 
