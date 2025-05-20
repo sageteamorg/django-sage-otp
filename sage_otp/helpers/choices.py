@@ -55,6 +55,7 @@ class OTPState(models.TextChoices):
     CONSUMED = ("Consumed", _("Consumed"))
     EXPIRED = ("Expired", _("Expired"))
     ACTIVE = ("Active", _("Active"))
+    LOCKED = ("Locked", _("Locked"))
 
     @staticmethod
     def validate_transition(current_state, target_state):

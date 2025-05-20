@@ -90,6 +90,15 @@ class OTP(TimeStampMixin):
         db_comment="Time of the Otp send last time",
     )
 
+    lockout_end_time = models.DateTimeField(
+        _("Lockout End Time"),
+        null=True,
+        blank=True,
+        default=None,
+        help_text=_("The time until which OTP is locked out."),
+        db_comment="Timestamp until which this OTP cannot be retried after exceeding max attempts.",
+    )
+
     bll = OtpBusinessLogicLayer()
     objects = models.Manager()
 
@@ -112,6 +121,9 @@ class OTP(TimeStampMixin):
         if token != self.token:
             return False, OTPState.ACTIVE
         return True, OTPState.ACTIVE
+
+    def is_locked(self) -> bool:
+        return self.state == OTPState.LOCKED and self.lockout_end_time and self.lockout_end_time > tz.now()
 
     def is_consumed(self):
         if self.state == OTPState.CONSUMED:
