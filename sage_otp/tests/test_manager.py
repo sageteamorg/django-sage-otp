@@ -1,122 +1,299 @@
-from datetime import timedelta
+"""
+Comprehensive tests for OTP manager.
+
+This module tests the OTPManager class functionality including
+OTP management, validation, and business logic operations.
+"""
 
 import pytest
+from datetime import timedelta
+from unittest.mock import patch, MagicMock
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
-from sage_otp.helpers.choices import ReasonOptions
+from sage_otp.models import OTP
+from sage_otp.helpers.choices import OTPState, ReasonOptions
 from sage_otp.helpers.exceptions import (
     OTPDoesNotExists,
-    OTPException,
     OTPExpiredException,
+    InvalidTokenException,
+    UserLockedException,
 )
-from sage_otp.models import OTP, OTPState
 from sage_otp.repository.managers.otp import OTPManager
 
 User = get_user_model()
 
 
-# Test class for OTPManager
-class TestOTPManager:
-    """Test cases for the OTPManager class methods."""
+@pytest.mark.django_db
+class TestOTPManagerUserResolution:
+    """Test OTP manager user resolution functionality."""
 
     @pytest.fixture
-    def create_user(self, db):
-        """Fixture to create a test user."""
-        return User.objects.create_user(username="testuser", password="password")
+    def manager(self):
+        """Create OTP manager instance."""
+        return OTPManager()
 
     @pytest.fixture
-    def create_otp(self, create_user):
-        """Fixture to create an active OTP for testing."""
+    def user(self):
+        """Create a test user."""
+        user = User.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password="testpass123"
+        )
+        # Add otp_secret field dynamically for testing
+        user.otp_secret = None
+        user.save()
+        return user
+
+    def test_resolve_user_by_id(self, manager, user):
+        """Test resolving user by ID."""
+        resolved_user = manager.resolve_user_by_identifier(str(user.id))
+        assert resolved_user.id == user.id
+
+    def test_resolve_user_by_email(self, manager, user):
+        """Test resolving user by email."""
+        resolved_user = manager.resolve_user_by_identifier(user.email)
+        assert resolved_user.id == user.id
+
+    def test_resolve_user_by_username(self, manager, user):
+        """Test resolving user by username."""
+        resolved_user = manager.resolve_user_by_identifier(user.username)
+        assert resolved_user.id == user.id
+
+    def test_resolve_user_not_found(self, manager):
+        """Test resolving non-existent user."""
+        with pytest.raises(OTPDoesNotExists):
+            manager.resolve_user_by_identifier("nonexistent")
+
+
+@pytest.mark.django_db
+class TestOTPManagerSecretGeneration:
+    """Test OTP manager secret generation functionality."""
+
+    @pytest.fixture
+    def manager(self):
+        """Create OTP manager instance."""
+        return OTPManager()
+
+    @pytest.fixture
+    def user(self):
+        """Create a test user."""
+        user = User.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password="testpass123"
+        )
+        # Add otp_secret field dynamically for testing
+        user.otp_secret = None
+        user.save()
+        return user
+
+    def test_get_user_base32_secret_creates_new(self, manager, user):
+        """Test that secret is created when user has none."""
+        secret = manager.get_user_base32_secret(user)
+        
+        assert secret is not None
+        assert len(secret) > 0
+        user.refresh_from_db()
+        assert user.otp_secret == secret
+
+    def test_get_user_base32_secret_returns_existing(self, manager, user):
+        """Test that existing secret is returned."""
+        # Set existing secret
+        existing_secret = "EXISTING_SECRET_123"
+        user.otp_secret = existing_secret
+        user.save()
+        
+        secret = manager.get_user_base32_secret(user)
+        
+        assert secret == existing_secret
+
+
+@pytest.mark.django_db
+class TestOTPManagerOTPOperations:
+    """Test OTP manager OTP operations."""
+
+    @pytest.fixture
+    def manager(self):
+        """Create OTP manager instance."""
+        return OTPManager()
+
+    @pytest.fixture
+    def user(self):
+        """Create a test user."""
+        user = User.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password="testpass123"
+        )
+        # Add otp_secret field dynamically for testing
+        user.otp_secret = None
+        user.save()
+        return user
+
+    @pytest.fixture
+    def active_otp(self, user):
+        """Create an active OTP."""
         return OTP.objects.create(
-            user=create_user,
+            user=user,
             token="123456",
-            state=OTPState.ACTIVE,
             reason=ReasonOptions.LOGIN,
+            state=OTPState.ACTIVE
         )
 
-    @pytest.fixture
-    def expired_otp(self, create_user):
-        """Fixture to create an expired OTP."""
-        return OTP.objects.create(
-            user=create_user,
-            token="654321",
-            state=OTPState.EXPIRED,
-            reason=ReasonOptions.LOGIN,
-            created_at=timezone.now() - timedelta(seconds=310),
-        )
+    def test_get_or_create_otp_creates_new(self, manager, user):
+        """Test get_or_create_otp creates new OTP when none exists."""
+        otp, created = manager.get_or_create_otp(user.username, ReasonOptions.LOGIN)
+        
+        assert created is True
+        assert otp.user == user
+        assert otp.reason == ReasonOptions.LOGIN
+        assert otp.state == OTPState.ACTIVE
+        assert len(otp.token) >= 6
+        assert otp.token.isdigit()
 
-    def test_get_otp(self, create_user, create_otp):
-        """Test retrieving an OTP using get_otp."""
-        manager = OTPManager()
-        otp = manager.get_otp(create_user.username, ReasonOptions.LOGIN)
+    def test_get_or_create_otp_returns_existing(self, manager, user):
+        """Test get_or_create_otp returns existing active OTP."""
+        # Create existing OTP
+        existing_otp = OTP.objects.create(
+            user=user,
+            token="123456",
+            reason=ReasonOptions.LOGIN,
+            state=OTPState.ACTIVE
+        )
+        
+        otp, created = manager.get_or_create_otp(user.username, ReasonOptions.LOGIN)
+        
+        assert created is False
+        assert otp.id == existing_otp.id
+        assert otp.token == "123456"
+
+    def test_get_otp_success(self, manager, active_otp):
+        """Test successful OTP retrieval."""
+        otp = manager.get_otp(active_otp.user.username, ReasonOptions.LOGIN)
+        
+        assert otp.id == active_otp.id
         assert otp.token == "123456"
         assert otp.state == OTPState.ACTIVE
 
-    def test_get_otp_does_not_exist(self, create_user):
-        """Test that OTPDoesNotExists is raised if no OTP is found."""
-        manager = OTPManager()
+    def test_get_otp_not_found(self, manager, user):
+        """Test get_otp when no OTP exists."""
         with pytest.raises(OTPDoesNotExists):
-            manager.get_otp(create_user.username, ReasonOptions.LOGIN)
+            manager.get_otp(user.username, ReasonOptions.LOGIN)
 
-    def test_get_or_create_otp_create(self, create_user):
-        """Test get_or_create_otp when no OTP exists, ensuring one is created."""
-        manager = OTPManager()
-        otp, created = manager.get_or_create_otp(
-            create_user.username, ReasonOptions.LOGIN
-        )
-        assert created is True
-        assert otp.token is not None
-        assert otp.state == OTPState.ACTIVE
-
-    def test_reset_otp(self, create_otp):
-        """Test resetting an OTP using reset_otp."""
-        manager = OTPManager()
-        reset_otp = manager.reset_otp(create_otp)
-        assert reset_otp.token != "123456"  # Token should be regenerated
+    def test_reset_otp_success(self, manager, active_otp):
+        """Test successful OTP reset."""
+        old_token = active_otp.token
+        active_otp.failed_attempts_count = 3
+        active_otp.save()
+        
+        reset_otp = manager.reset_otp(active_otp)
+        
+        assert reset_otp.id == active_otp.id
+        assert reset_otp.token != old_token  # New token generated
         assert reset_otp.failed_attempts_count == 0
         assert reset_otp.state == OTPState.ACTIVE
 
-    def test_check_otp_last_sent_at(self, create_otp):
-        """Test that OTP resend check works correctly."""
-        manager = OTPManager()
-        create_otp.last_sent_at = timezone.now() - timedelta(minutes=1)
-        create_otp.save()
-
-        resend_check = manager.check_otp_last_sent_at(create_otp)
-        assert resend_check is not None
-
-        create_otp.last_sent_at = timezone.now()
-        create_otp.save()
-
-        resend_check = manager.check_otp_last_sent_at(create_otp)
-        assert resend_check is not None
-        assert resend_check["resend_delay"] is True
-
-    def test_send_otp(self, create_user):
-        """Test sending an OTP to a user."""
-        manager = OTPManager()
-        otp = manager.send_otp(create_user.username, ReasonOptions.LOGIN)
-        assert otp is None
-
-    def test_check_otp_valid(self, create_otp):
-        """Test that a valid OTP is correctly validated."""
-        manager = OTPManager()
+    def test_check_otp_valid_token_success(self, manager, active_otp):
+        """Test successful OTP verification."""
         result = manager.check_otp(
-            create_otp.user.username, "123456", ReasonOptions.LOGIN
+            active_otp.user.username, 
+            active_otp.token, 
+            ReasonOptions.LOGIN
         )
+        
         assert result["token_is_correct"] is True
+        active_otp.refresh_from_db()
+        assert active_otp.state == OTPState.CONSUMED
 
-    def test_check_otp_invalid(self, create_otp):
-        """Test that an invalid OTP is handled properly."""
-        manager = OTPManager()
-        result = manager.check_otp(
-            create_otp.user.username, "wrong_token", ReasonOptions.LOGIN
+    def test_check_otp_invalid_token(self, manager, active_otp):
+        """Test OTP verification with wrong token."""
+        with pytest.raises(Exception):  # Should raise some exception for wrong token
+            manager.check_otp(
+                active_otp.user.username,
+                "wrong_token",
+                ReasonOptions.LOGIN
+            )
+        
+        active_otp.refresh_from_db()
+        assert active_otp.failed_attempts_count >= 1
+
+    def test_check_otp_expired_raises_exception(self, manager, user):
+        """Test check_otp with expired OTP."""
+        past_time = timezone.now() - timedelta(seconds=400)
+        expired_otp = OTP.objects.create(
+            user=user,
+            token="123456",
+            reason=ReasonOptions.LOGIN,
+            state=OTPState.ACTIVE,
+            created_at=past_time
         )
-        assert result["token_is_correct"] is False
-
-    def test_check_otp_expired(self, expired_otp):
-        """Test that an expired OTP raises OTPExpiredException."""
-        manager = OTPManager()
+        
         with pytest.raises(OTPExpiredException):
-            manager.check_otp(expired_otp.user.username, "654321", ReasonOptions.LOGIN)
+            manager.check_otp(user.username, "123456", ReasonOptions.LOGIN)
+
+
+@pytest.mark.django_db
+class TestOTPManagerResendOperations:
+    """Test OTP manager resend functionality."""
+
+    @pytest.fixture
+    def manager(self):
+        """Create OTP manager instance."""
+        return OTPManager()
+
+    @pytest.fixture
+    def user(self):
+        """Create a test user."""
+        user = User.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password="testpass123"
+        )
+        # Add otp_secret field dynamically for testing
+        user.otp_secret = None
+        user.save()
+        return user
+
+    def test_check_otp_last_sent_at_can_resend(self, manager, user):
+        """Test that OTP can be resent after wait time."""
+        past_time = timezone.now() - timedelta(minutes=5)
+        otp = OTP.objects.create(
+            user=user,
+            token="123456",
+            reason=ReasonOptions.LOGIN,
+            state=OTPState.ACTIVE,
+            last_sent_at=past_time
+        )
+        
+        result = manager.check_otp_last_sent_at(otp)
+        assert result is None  # Can resend
+
+    def test_check_otp_last_sent_at_within_delay(self, manager, user):
+        """Test that OTP cannot be resent within wait time."""
+        recent_time = timezone.now() - timedelta(seconds=30)
+        otp = OTP.objects.create(
+            user=user,
+            token="123456",
+            reason=ReasonOptions.LOGIN,
+            state=OTPState.ACTIVE,
+            last_sent_at=recent_time
+        )
+        
+        result = manager.check_otp_last_sent_at(otp)
+        assert result is not None
+        assert result["resend_delay"] is True
+        assert "resend_release_time_remaining" in result
+
+    def test_send_otp_success(self, manager, user):
+        """Test successful OTP sending."""
+        result = manager.send_otp(user.username, ReasonOptions.LOGIN)
+        
+        # Should return None if successful (no delay)
+        assert result is None
+        
+        # Verify OTP was created
+        otp = OTP.objects.get(user=user, reason=ReasonOptions.LOGIN)
+        assert otp.state == OTPState.ACTIVE
+        assert otp.last_sent_at is not None

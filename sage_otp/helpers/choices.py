@@ -44,22 +44,31 @@ class OTPState(models.TextChoices):
     State Choices Enumeration for Authentication.
 
     This class provides four choices:
-    'Consumed', 'Expired', and 'Active'.
+    'Active', 'Consumed', 'Expired', and 'Locked'.
 
     Attributes:
+        ACTIVE (str): The string representing the 'Active' state choice.
         CONSUMED (str): The string representing the 'Consumed' state choice.
         EXPIRED (str): The string representing the 'Expired' state choice.
-        ACTIVE (str): The string representing the 'Active' state choice.
+        LOCKED (str): The string representing the 'Locked' state choice.
     """
 
+    ACTIVE = ("Active", _("Active"))
     CONSUMED = ("Consumed", _("Consumed"))
     EXPIRED = ("Expired", _("Expired"))
-    ACTIVE = ("Active", _("Active"))
     LOCKED = ("Locked", _("Locked"))
 
     @staticmethod
     def validate_transition(current_state, target_state):
-        """Validates if a transition from current_state to target_state is allowed."""
+        """
+        Validates if a transition from current_state to target_state is allowed.
+        
+        Valid state transitions:
+        - ACTIVE -> CONSUMED, EXPIRED, LOCKED
+        - LOCKED -> ACTIVE, EXPIRED
+        - CONSUMED -> (no transitions allowed)
+        - EXPIRED -> (no transitions allowed)
+        """
         valid_choices = [choice[0] for choice in OTPState.choices]
         if current_state not in valid_choices or target_state not in valid_choices:
             raise InvalidStateException(
@@ -67,28 +76,56 @@ class OTPState(models.TextChoices):
                 f"Current state: {current_state}, Target state: {target_state}."
             )
 
+        # Define valid state transitions
         valid_transitions = {
-            OTPState.ACTIVE: [OTPState.CONSUMED, OTPState.EXPIRED],
-            OTPState.CONSUMED: [],
-            OTPState.EXPIRED: [],
+            OTPState.ACTIVE: [OTPState.CONSUMED, OTPState.EXPIRED, OTPState.LOCKED],
+            OTPState.LOCKED: [OTPState.ACTIVE, OTPState.EXPIRED],  # Allow unlock and expiry
+            OTPState.CONSUMED: [],  # Terminal state
+            OTPState.EXPIRED: [],   # Terminal state
         }
 
-        if target_state not in valid_transitions.get(current_state, []):
+        allowed_transitions = valid_transitions.get(current_state, [])
+        if target_state not in allowed_transitions:
             raise InvalidStateException(
-                f"Invalid transition from '{current_state}' to '{target_state}'."
+                f"Invalid transition from '{current_state}' to '{target_state}'. "
+                f"Allowed transitions: {allowed_transitions}"
             )
 
     @staticmethod
     def to_consumed(current_state):
+        """Transition to CONSUMED state with validation."""
         OTPState.validate_transition(current_state, OTPState.CONSUMED)
         return OTPState.CONSUMED
 
     @staticmethod
     def to_expired(current_state):
+        """Transition to EXPIRED state with validation."""
         OTPState.validate_transition(current_state, OTPState.EXPIRED)
         return OTPState.EXPIRED
 
     @staticmethod
     def to_active(current_state):
+        """Transition to ACTIVE state with validation."""
         OTPState.validate_transition(current_state, OTPState.ACTIVE)
         return OTPState.ACTIVE
+
+    @staticmethod
+    def to_locked(current_state):
+        """Transition to LOCKED state with validation."""
+        OTPState.validate_transition(current_state, OTPState.LOCKED)
+        return OTPState.LOCKED
+
+    @classmethod
+    def get_terminal_states(cls):
+        """Return states that cannot transition to other states."""
+        return [cls.CONSUMED, cls.EXPIRED]
+
+    @classmethod
+    def get_active_states(cls):
+        """Return states that are considered active/usable."""
+        return [cls.ACTIVE]
+
+    @classmethod
+    def get_inactive_states(cls):
+        """Return states that are considered inactive/unusable."""
+        return [cls.CONSUMED, cls.EXPIRED, cls.LOCKED]

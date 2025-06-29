@@ -27,7 +27,7 @@ from sage_otp.signals.otp import (
     otp_reset,
     otp_secret_generated,
     otp_sent,
-    otp_validated
+    otp_validated,
 )
 from sage_otp.helpers.exceptions import (
     OTPDoesNotExists,
@@ -67,28 +67,44 @@ class OTPManager:
 
     def get_user_base32_secret(self, user: User) -> str:
         if not user.otp_secret:
-            user.otp_secret = base64.b32encode(secrets.token_urlsafe(16).encode()).decode()
+            user.otp_secret = base64.b32encode(
+                secrets.token_urlsafe(16).encode()
+            ).decode()
             user.save(update_fields=["otp_secret"])
             logger.info("New OTP secret generated for user_id=%s", user.id)
-            otp_secret_generated.send(sender=self.__class__, user=user, secret=user.otp_secret)
+            otp_secret_generated.send(
+                sender=self.__class__, user=user, secret=user.otp_secret
+            )
         return user.otp_secret
 
     def get_otp(self, identifier: str, reason: str) -> _T:
         from sage_otp.models import OTP
+
         user = self.resolve_user_by_identifier(identifier)
         try:
             return OTP.objects.get(user=user, reason=reason, state=OTPState.ACTIVE)
         except OTP.DoesNotExist:
-            logger.warning("OTP: No active OTP found for user_id=%s, reason='%s'", user.id, reason)
+            logger.warning(
+                "OTP: No active OTP found for user_id=%s, reason='%s'", user.id, reason
+            )
             raise OTPDoesNotExists(params={"identifier": identifier, "reason": reason})
         except OTP.MultipleObjectsReturned as e:
-            logger.error("OTP: Multiple active OTPs found for identifier='%s', reason='%s'", identifier, reason)
-            raise OTPException(str(e), params={"identifier": identifier, "reason": reason})
+            logger.error(
+                "OTP: Multiple active OTPs found for identifier='%s', reason='%s'",
+                identifier,
+                reason,
+            )
+            raise OTPException(
+                str(e), params={"identifier": identifier, "reason": reason}
+            )
 
     def get_or_create_otp(self, identifier: str, reason: str) -> tuple[_T, bool]:
         from sage_otp.models import OTP
+
         user = self.resolve_user_by_identifier(identifier)
-        active_otps = OTP.objects.filter(user=user, reason=reason, state=OTPState.ACTIVE)
+        active_otps = OTP.objects.filter(
+            user=user, reason=reason, state=OTPState.ACTIVE
+        )
 
         for otp in active_otps:
             if otp.created_at + timedelta(seconds=OTP_LIFETIME) <= timezone.now():
@@ -97,7 +113,9 @@ class OTPManager:
                 otp_expired.send(sender=self.__class__, user=user, otp=otp)
                 logger.info("OTP expired. OTP ID=%s, user_id=%s", otp.id, user.id)
             else:
-                logger.debug("Using existing OTP. OTP ID=%s, user_id=%s", otp.id, user.id)
+                logger.debug(
+                    "Using existing OTP. OTP ID=%s, user_id=%s", otp.id, user.id
+                )
                 return otp, False
 
         secret = self.get_user_base32_secret(user)
@@ -125,16 +143,24 @@ class OTPManager:
 
     def check_otp_last_sent_at(self, otp: _T) -> Optional[Dict[str, bool]]:
         if otp.last_sent_at and (otp.last_sent_at + self.RESEND_TIME > timezone.now()):
-            remaining = int((otp.last_sent_at + self.RESEND_TIME - timezone.now()).seconds)
-            logger.debug("OTP resend blocked. OTP ID=%s, remaining=%ss", otp.id, remaining)
+            remaining = int(
+                (otp.last_sent_at + self.RESEND_TIME - timezone.now()).seconds
+            )
+            logger.debug(
+                "OTP resend blocked. OTP ID=%s, remaining=%ss", otp.id, remaining
+            )
             return {"resend_delay": True, "resend_release_time_remaining": remaining}
         return None
 
-    def send_otp(self, identifier: str, reason: str) -> Optional[Dict[str, Union[bool, int]]]:
+    def send_otp(
+        self, identifier: str, reason: str
+    ) -> Optional[Dict[str, Union[bool, int]]]:
         otp, created = self.get_or_create_otp(identifier, reason)
         resend_data = self.check_otp_last_sent_at(otp)
         if resend_data:
-            logger.info("OTP resend delayed. OTP ID=%s, user_id=%s", otp.id, otp.user.id)
+            logger.info(
+                "OTP resend delayed. OTP ID=%s, user_id=%s", otp.id, otp.user.id
+            )
             return resend_data
 
         otp.state = OTPState.ACTIVE
@@ -146,7 +172,9 @@ class OTPManager:
         otp_sent.send(sender=self.__class__, user=otp.user, otp=otp, reason=reason)
         return None
 
-    def check_otp(self, identifier: str, token: str, reason: str) -> Union[Dict[str, bool], NoReturn]:
+    def check_otp(
+        self, identifier: str, token: str, reason: str
+    ) -> Union[Dict[str, bool], NoReturn]:
         otp = self.get_otp(identifier, reason)
 
         if otp.is_expired():
@@ -174,11 +202,22 @@ class OTPManager:
             logger.warning("OTP locked. OTP ID=%s", otp.id)
             otp_locked.send(sender=self.__class__, user=otp.user, otp=otp)
             otp.save(update_fields=update_fields)
-            raise UserLockedException("The user is locked due to too many failed attempts.")
+            raise UserLockedException(
+                "The user is locked due to too many failed attempts."
+            )
 
         otp.save(update_fields=update_fields)
-        log_level("OTP validation failed. OTP ID=%s, failed_attempts=%d", otp.id, otp.failed_attempts_count)
-        otp_failed.send(sender=self.__class__, user=otp.user, otp=otp, failed_attempts_count=otp.failed_attempts_count)
+        log_level(
+            "OTP validation failed. OTP ID=%s, failed_attempts=%d",
+            otp.id,
+            otp.failed_attempts_count,
+        )
+        otp_failed.send(
+            sender=self.__class__,
+            user=otp.user,
+            otp=otp,
+            failed_attempts_count=otp.failed_attempts_count,
+        )
 
         return {"token_is_correct": False}
 

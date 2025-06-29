@@ -34,27 +34,36 @@ class OTPAdmin(admin.ModelAdmin):
     list_select_related = ("user",)
 
     fieldsets = (
-        (_("Basic Information"), {
-            "fields": (
-                "user",
-                "token",
-                "state",
-                "reason",
-            ),
-        }),
-        (_("Tracking"), {
-            "fields": (
-                "failed_attempts_count",
-                "resend_requests_count",
-                "last_sent_at",
-            ),
-        }),
-        (_("Timestamps"), {
-            "fields": (
-                "created_at",
-                "modified_at",
-            ),
-        }),
+        (
+            _("Basic Information"),
+            {
+                "fields": (
+                    "user",
+                    "token",
+                    "state",
+                    "reason",
+                ),
+            },
+        ),
+        (
+            _("Tracking"),
+            {
+                "fields": (
+                    "failed_attempts_count",
+                    "resend_requests_count",
+                    "last_sent_at",
+                ),
+            },
+        ),
+        (
+            _("Timestamps"),
+            {
+                "fields": (
+                    "created_at",
+                    "modified_at",
+                ),
+            },
+        ),
     )
 
     readonly_fields = ("created_at", "modified_at", "last_sent_at")
@@ -108,9 +117,7 @@ class OTPAdmin(admin.ModelAdmin):
 
         self.message_user(
             request,
-            _(
-                f"{updated_count} active tokens were marked as expired."
-            ),
+            _(f"{updated_count} active tokens were marked as expired."),
             level="info",
         )
 
